@@ -1,0 +1,3 @@
+Hello, this is a demonstration of Kyutai TTS.
+The model can generate high-quality speech in real-time.
+It supports streaming text input and provides word-level timestamps.

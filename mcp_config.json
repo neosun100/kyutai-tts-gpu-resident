@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "kyutai-tts": {
+      "command": "python3",
+      "args": ["/home/neo/upload/delayed-streams-modeling/mcp_server.py"],
+      "env": {
+        "GPU_IDLE_TIMEOUT": "600",
+        "DEVICE": "cuda",
+        "HF_REPO": "kyutai/tts-1.6b",
+        "VOICE_REPO": "kyutai/tts-voices",
+        "DEFAULT_VOICE": "expresso/ex03-ex01_happy_001_channel1_334s.wav"
+      }
+    }
+  }
+}
