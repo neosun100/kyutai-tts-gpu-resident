@@ -121,6 +121,75 @@ def gpu_offload():
     gpu_manager.force_offload()
     return jsonify({'status': 'offloaded'})
 
+@app.route('/api/voice/upload', methods=['POST'])
+def upload_custom_voice():
+    """Upload custom voice for cloning"""
+    if 'voice_file' not in request.files:
+        return jsonify({'error': 'No voice file'}), 400
+    
+    voice_file = request.files['voice_file']
+    voice_name = request.form.get('voice_name', 'custom_voice')
+    
+    if not voice_file.filename.endswith('.wav'):
+        return jsonify({'error': 'Only WAV files'}), 400
+    
+    try:
+        voice_dir = '/app/custom_voices'
+        os.makedirs(voice_dir, exist_ok=True)
+        voice_path = os.path.join(voice_dir, f"{voice_name}.wav")
+        voice_file.save(voice_path)
+        
+        return jsonify({
+            'status': 'success',
+            'voice_path': f"custom/{voice_name}.wav",
+            'message': f'Use "custom/{voice_name}.wav" as voice parameter'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tts/stream', methods=['POST'])
+def tts_stream():
+    """Streaming TTS"""
+    text = request.form.get('text', '')
+    voice = request.form.get('voice', DEFAULT_VOICE)
+    cfg_coef = float(request.form.get('cfg_coef', 2.0))
+    
+    if not text:
+        return jsonify({'error': 'No text'}), 400
+    
+    def generate():
+        try:
+            tts_model = gpu_manager.get_model(load_model)
+            entries = tts_model.prepare_script([text], padding_between=1)
+            
+            if voice.startswith('custom/'):
+                voice_path = f"/app/custom_voices/{voice.replace('custom/', '')}"
+            else:
+                voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
+            
+            condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+            result = tts_model.generate([entries], [condition_attributes])
+            
+            with tts_model.mimi.streaming(1), torch.no_grad():
+                for frame in result.frames[tts_model.delay_steps:]:
+                    pcm = tts_model.mimi.decode(frame[:, 1:, :]).cpu().numpy()
+                    pcm_clip = np.clip(pcm[0, 0], -1, 1)
+                    pcm_int16 = (pcm_clip * 32767).astype(np.int16)
+                    yield pcm_int16.tobytes()
+        except Exception as e:
+            yield str(e).encode()
+    
+    return app.response_class(generate(), mimetype='audio/wav')
+
+@app.route('/api/voices/custom')
+def list_custom_voices():
+    """List custom voices"""
+    voice_dir = '/app/custom_voices'
+    if not os.path.exists(voice_dir):
+        return jsonify({'voices': []})
+    voices = [f"custom/{f}" for f in os.listdir(voice_dir) if f.endswith('.wav')]
+    return jsonify({'voices': voices})
+
 UI_HTML = '''<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kyutai TTS</title>
@@ -164,11 +233,17 @@ audio{width:100%;margin-top:15px}
 <textarea id="text" placeholder="Enter text here...">Hello, this is a test of the Kyutai text-to-speech system.</textarea>
 </div>
 <div class="form-group">
-<label data-i18n="voice_label">Voice (400+ options)</label>
+<label data-i18n="voice_label">Voice (584 options + Custom)</label>
 <input type="text" id="voice-filter" class="voice-filter" placeholder="Filter voices..." onkeyup="filterVoices()">
 <select id="voice" size="8">
 <option value="">Loading voices...</option>
 </select>
+</div>
+<div class="form-group">
+<label>🎤 Upload Custom Voice (3-10s WAV)</label>
+<input type="file" id="voice-upload" accept=".wav">
+<button onclick="uploadVoice()" style="margin-top:10px;background:#16a34a">Upload Voice</button>
+<div id="upload-status"></div>
 </div>
 <div class="param-grid">
 <div class="form-group">
@@ -176,8 +251,11 @@ audio{width:100%;margin-top:15px}
 <input type="number" id="cfg" value="2.0" min="1" max="3" step="0.1">
 </div>
 <div class="form-group">
-<label>Temperature (0.1-1.0)</label>
-<input type="number" id="temp" value="0.6" min="0.1" max="1.0" step="0.1">
+<label>Mode</label>
+<select id="mode">
+<option value="normal">Normal</option>
+<option value="stream">Streaming</option>
+</select>
 </div>
 </div>
 <button onclick="generate()" id="btn" data-i18n="generate">Generate Speech</button>
@@ -188,7 +266,7 @@ audio{width:100%;margin-top:15px}
 <script>
 let allVoices=[];
 const i18n={
-en:{title:"Kyutai TTS - GPU Resident",gpu_status:"GPU Status: ",offload_gpu:"Release GPU",text_label:"Text to Synthesize",voice_label:"Voice (400+ options)",generate:"Generate Speech"},
+en:{title:"Kyutai TTS - GPU Resident",gpu_status:"GPU Status: ",offload_gpu:"Release GPU",text_label:"Text to Synthesize",voice_label:"Voice (584 options + Custom)",generate:"Generate Speech"},
 "zh-CN":{title:"Kyutai 语音合成 - 显存常驻",gpu_status:"GPU 状态: ",offload_gpu:"释放显存",text_label:"输入文本",voice_label:"音色 (400+ 选项)",generate:"生成语音"}
 };
 function switchLang(lang){
@@ -201,12 +279,15 @@ async function loadVoices(){
 const res=await fetch('/api/voices');
 const data=await res.json();
 allVoices=data.voices;
+const customRes=await fetch('/api/voices/custom');
+const customData=await customRes.json();
+allVoices=[...customData.voices,...allVoices];
 const select=document.getElementById('voice');
 select.innerHTML='';
 allVoices.forEach(v=>{
 const opt=document.createElement('option');
 opt.value=v;
-opt.textContent=v;
+opt.textContent=v.startsWith('custom/')?'🎤 '+v:v;
 if(v==='expresso/ex03-ex01_happy_001_channel1_334s.wav')opt.selected=true;
 select.appendChild(opt);
 });
@@ -227,6 +308,7 @@ select.appendChild(opt);
 async function generate(){
 const text=document.getElementById('text').value;
 const voice=document.getElementById('voice').value;
+const mode=document.getElementById('mode').value;
 if(!text){alert('Please enter text');return}
 if(!voice){alert('Please select a voice');return}
 const btn=document.getElementById('btn');
@@ -239,7 +321,8 @@ formData.append('text',text);
 formData.append('voice',voice);
 formData.append('cfg_coef',document.getElementById('cfg').value);
 try{
-const res=await fetch('/api/tts',{method:'POST',body:formData});
+const endpoint=mode==='stream'?'/api/tts/stream':'/api/tts';
+const res=await fetch(endpoint,{method:'POST',body:formData});
 if(!res.ok)throw new Error(await res.text());
 const blob=await res.blob();
 const url=URL.createObjectURL(blob);
@@ -254,6 +337,30 @@ status.className='status error';
 status.textContent='❌ Error: '+e.message;
 }finally{
 btn.disabled=false;
+}
+}
+async function uploadVoice(){
+const file=document.getElementById('voice-upload').files[0];
+if(!file){alert('Please select a WAV file');return}
+const status=document.getElementById('upload-status');
+status.textContent='Uploading...';
+const formData=new FormData();
+formData.append('voice_file',file);
+formData.append('voice_name',file.name.replace('.wav',''));
+try{
+const res=await fetch('/api/voice/upload',{method:'POST',body:formData});
+const data=await res.json();
+if(data.status==='success'){
+status.style.color='#4ade80';
+status.textContent='✅ '+data.message;
+await loadVoices();
+}else{
+status.style.color='#f87171';
+status.textContent='❌ '+data.error;
+}
+}catch(e){
+status.style.color='#f87171';
+status.textContent='❌ '+e.message;
 }
 }
 async function offloadGPU(){

@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   kyutai-tts:
-    image: neosun/kyutai-tts:v1.1-allinone
+    image: neosun/kyutai-tts:v1.2-allinone
     container_name: kyutai-tts
     ports:
       - "0.0.0.0:${PORT:-8900}:8900"
@@ -20,6 +20,7 @@ services:
       start_period: 60s
     volumes:
       - ./outputs:/app/outputs
+      - ./custom_voices:/app/custom_voices
     deploy:
       resources:
         reservations:
