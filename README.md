@@ -1,107 +1,124 @@
-# Kyutai TTS Docker Deployment
-
-[English](README.md) | [简体中文](README_CN.md) | [繁體中文](README_TW.md) | [日本語](README_JP.md)
+# 🚀 Kyutai TTS - GPU Resident Edition
 
 [![Docker](https://img.shields.io/badge/docker-neosun%2Fkyutai--tts-blue)](https://hub.docker.com/r/neosun/kyutai-tts)
+[![Version](https://img.shields.io/badge/version-v1.2--allinone-green)](https://github.com/neosun100/kyutai-tts-gpu-resident)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE-MIT)
 [![GPU](https://img.shields.io/badge/GPU-CUDA%2012.1-brightgreen)](https://developer.nvidia.com/cuda-toolkit)
 
-> Production-ready Docker deployment for Kyutai TTS with UI, REST API, and MCP support
+> 🎯 Production-ready Kyutai TTS with **GPU-resident mode**, **584 voices**, **custom voice cloning**, and **streaming output**
 
-## ✨ Features
+## ✨ Key Features
 
-- 🚀 **One-Click Deployment** - Automated GPU selection and port detection
-- 🎨 **Three Access Modes** - Web UI, REST API, and MCP tools
-- 🧠 **Smart GPU Management** - Lazy loading and automatic memory release
-- 🌐 **Multi-language UI** - English and Chinese interface
-- 📦 **All-in-One Image** - No external dependencies, models included
-- 🔒 **Production Ready** - HTTPS, health checks, and monitoring
+### 🔥 GPU Resident Mode
+- **Zero-latency response** - Model stays in VRAM permanently
+- **3.8GB VRAM** usage for instant generation
+- **No reload delays** - First request = subsequent requests
+- Manual offload control via API
+
+### 🎤 Custom Voice Cloning
+- **Upload your own voice** (3-10 second WAV file)
+- **Instant voice cloning** - No training required
+- **Use anywhere** - Apply to any text generation
+- **Persistent storage** - Voices saved across restarts
+
+### 🌊 Streaming Output
+- **Real-time generation** - Audio streams as it's created
+- **Lower latency** - Start playback before completion
+- **Perfect for long texts** - Ideal for audiobooks, articles
+- **Edge-by-edge delivery** - Smooth continuous output
+
+### 🎨 584 Pre-built Voices
+- **Expresso**: Emotions (happy, angry, sad, calm, confused, etc.)
+- **EARS**: 107 speakers with 25 emotion variants each
+- **CML-TTS**: French language voices
+- **VCTK**: 109 English speakers
+- **Voice Donations**: 200+ community voices
+- **Multi-language**: English, French support
 
 ## 🚀 Quick Start
 
-### Using Docker Hub (Recommended)
+### One-Line Deploy
 
 ```bash
 docker run -d \
   --name kyutai-tts \
   --gpus all \
   -p 8900:8900 \
-  -e NVIDIA_VISIBLE_DEVICES=0 \
-  neosun/kyutai-tts:allinone
+  -v $(pwd)/custom_voices:/app/custom_voices \
+  neosun/kyutai-tts:latest
 ```
 
-Access at: http://localhost:8900
+Access at: **http://localhost:8900**
 
-### Using Docker Compose
-
-```bash
-git clone https://github.com/neosun100/kyutai-tts-docker.git
-cd kyutai-tts-docker
-./start.sh
-```
-
-## 📦 Installation
-
-### Prerequisites
-
-- Docker 20.10+
-- Docker Compose 2.0+
-- NVIDIA GPU with CUDA support
-- nvidia-docker runtime
-
-### Method 1: Pull from Docker Hub
+### Docker Compose
 
 ```bash
-docker pull neosun/kyutai-tts:allinone
-```
-
-### Method 2: Build from Source
-
-```bash
-git clone https://github.com/neosun100/kyutai-tts-docker.git
-cd kyutai-tts-docker
-docker-compose build
-```
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 8900 | Service port |
-| `DEVICE` | cuda | Device type (cuda/cpu) |
-| `GPU_IDLE_TIMEOUT` | 60 | GPU idle timeout (seconds) |
-| `NVIDIA_VISIBLE_DEVICES` | 0 | GPU ID to use |
-
-### Example `.env` File
-
-```bash
-PORT=8900
-DEVICE=cuda
-GPU_IDLE_TIMEOUT=60
-NVIDIA_VISIBLE_DEVICES=0
+git clone https://github.com/neosun100/kyutai-tts-gpu-resident.git
+cd kyutai-tts-gpu-resident
+docker-compose up -d
 ```
 
 ## 📖 Usage
 
 ### Web UI
 
-1. Open browser: http://localhost:8900
-2. Enter text to synthesize
-3. Adjust parameters (optional)
-4. Click "Generate"
-5. Play or download audio
+1. Open **http://localhost:8900**
+2. Select from 584 voices or upload your own
+3. Enter text to synthesize
+4. Choose Normal or Streaming mode
+5. Click "Generate Speech"
+6. Play or download audio
 
 ### REST API
 
-#### Generate Speech
+#### Generate Speech (Normal)
 
 ```bash
 curl -X POST http://localhost:8900/api/tts \
   -F "text=Hello, world!" \
+  -F "voice=expresso/ex03-ex01_happy_001_channel1_334s.wav" \
   -F "cfg_coef=2.0" \
   --output output.wav
+```
+
+#### Generate Speech (Streaming)
+
+```bash
+curl -X POST http://localhost:8900/api/tts/stream \
+  -F "text=This is streaming output!" \
+  -F "voice=expresso/ex03-ex01_happy_001_channel1_334s.wav" \
+  -F "cfg_coef=2.0" \
+  --output output.wav
+```
+
+#### Upload Custom Voice
+
+```bash
+curl -X POST http://localhost:8900/api/voice/upload \
+  -F "voice_file=@my_voice.wav" \
+  -F "voice_name=my_voice" 
+```
+
+#### Use Custom Voice
+
+```bash
+curl -X POST http://localhost:8900/api/tts \
+  -F "text=Testing my custom voice!" \
+  -F "voice=custom/my_voice.wav" \
+  -F "cfg_coef=2.0" \
+  --output output.wav
+```
+
+#### List All Voices
+
+```bash
+curl http://localhost:8900/api/voices
+```
+
+#### List Custom Voices
+
+```bash
+curl http://localhost:8900/api/voices/custom
 ```
 
 #### Check GPU Status
@@ -116,66 +133,109 @@ curl http://localhost:8900/api/gpu/status
 curl -X POST http://localhost:8900/api/gpu/offload
 ```
 
-### MCP Tools
+## 🎯 Voice Categories
 
-See [MCP_GUIDE.md](MCP_GUIDE.md) for detailed MCP usage.
+### Emotion Voices (EARS)
+- `ears/p003/emo_amusement_freeform.wav` - Amusement
+- `ears/p003/emo_anger_freeform.wav` - Anger
+- `ears/p003/emo_fear_freeform.wav` - Fear
+- `ears/p003/emo_sadness_freeform.wav` - Sadness
+- `ears/p031/emo_happiness_freeform.wav` - Happiness
+- ... and 20+ more emotions
 
-```python
-result = await mcp_client.call_tool(
-    "text_to_speech",
-    {
-        "text": "Hello from MCP!",
-        "output_path": "/tmp/output.wav"
-    }
-)
+### Style Voices (Expresso)
+- `expresso/ex03-ex01_happy_001_channel1_334s.wav` - Happy
+- `expresso/ex03-ex01_angry_001_channel1_201s.wav` - Angry
+- `expresso/ex03-ex01_calm_001_channel1_1143s.wav` - Calm
+- `expresso/ex03-ex01_confused_001_channel1_909s.wav` - Confused
+- `expresso/ex03-ex01_laughing_001_channel1_188s.wav` - Laughing
+- ... and 50+ more styles
+
+### French Voices (CML-TTS)
+- `cml-tts/fr/1406_1028_000009-0003.wav`
+- `cml-tts/fr/2114_1656_000053-0001.wav`
+- ... and 40+ French voices
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 8900 | Service port |
+| `DEVICE` | cuda | Device type (cuda/cpu) |
+| `NVIDIA_VISIBLE_DEVICES` | 0 | GPU ID to use |
+
+### Docker Volumes
+
+| Volume | Purpose |
+|--------|---------|
+| `./outputs` | Generated audio files |
+| `./custom_voices` | Uploaded custom voices |
+
+## 📊 Performance
+
+- **Model Size**: 1.6B parameters
+- **GPU Memory**: 3.8GB (resident mode)
+- **Latency**: <100ms (GPU resident)
+- **Speed**: 3-5x real-time
+- **Audio Quality**: 16-bit PCM, 24kHz
+- **Streaming**: Edge-by-edge delivery
+
+## 🔧 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/api/tts` | POST | Generate speech (normal) |
+| `/api/tts/stream` | POST | Generate speech (streaming) |
+| `/api/voices` | GET | List all 584 voices |
+| `/api/voices/custom` | GET | List custom voices |
+| `/api/voice/upload` | POST | Upload custom voice |
+| `/api/gpu/status` | GET | GPU status |
+| `/api/gpu/offload` | POST | Release GPU memory |
+
+## 🎨 Custom Voice Cloning
+
+### Requirements
+- **Format**: WAV (16-bit PCM)
+- **Duration**: 3-10 seconds
+- **Quality**: Clear, noise-free recording
+- **Content**: Natural speech sample
+
+### Best Practices
+1. Record in quiet environment
+2. Use consistent tone and pace
+3. Avoid background noise
+4. Speak clearly and naturally
+5. 5-7 seconds is optimal
+
+### Example Workflow
+
+```bash
+# 1. Record your voice (use any recording tool)
+# Save as my_voice.wav
+
+# 2. Upload to system
+curl -X POST http://localhost:8900/api/voice/upload \
+  -F "voice_file=@my_voice.wav" \
+  -F "voice_name=john_doe"
+
+# 3. Use your voice
+curl -X POST http://localhost:8900/api/tts \
+  -F "text=This is my cloned voice!" \
+  -F "voice=custom/john_doe.wav" \
+  --output output.wav
 ```
-
-## 🏗️ Project Structure
-
-```
-kyutai-tts-docker/
-├── app.py                 # Flask application
-├── gpu_manager.py         # GPU resource manager
-├── mcp_server.py          # MCP server
-├── Dockerfile             # Docker image
-├── Dockerfile.allinone    # All-in-one image
-├── docker-compose.yml     # Docker Compose config
-├── start.sh               # One-click startup script
-├── test_api.sh            # API test script
-└── docs/                  # Documentation
-    ├── QUICKSTART.md
-    ├── MCP_GUIDE.md
-    └── TEST_REPORT.md
-```
-
-## 🛠️ Tech Stack
-
-- **Framework**: Flask 3.0
-- **ML Framework**: PyTorch 2.7 + CUDA 12.1
-- **TTS Model**: Kyutai TTS 1.6B (English/French)
-- **API Docs**: Swagger/Flasgger
-- **MCP**: FastMCP 0.2
-- **Container**: Docker + nvidia-docker
-
-## 🔗 API Documentation
-
-Once running, access Swagger docs at: http://localhost:8900/apidocs
-
-### Available Endpoints
-
-- `GET /health` - Health check
-- `GET /api/gpu/status` - GPU status
-- `POST /api/tts` - Generate speech
-- `POST /api/gpu/offload` - Release GPU memory
 
 ## 🌐 Production Deployment
 
-### With Nginx Reverse Proxy
+### With Nginx
 
 ```nginx
 server {
     listen 443 ssl;
-    server_name your-domain.com;
+    server_name tts.yourdomain.com;
     
     location / {
         proxy_pass http://localhost:8900;
@@ -195,33 +255,29 @@ NVIDIA_VISIBLE_DEVICES=0 PORT=8900 docker-compose up -d
 NVIDIA_VISIBLE_DEVICES=1 PORT=8901 docker-compose up -d
 ```
 
-## 📊 Performance
-
-- **Model Size**: 1.6B parameters
-- **GPU Memory**: 3-4GB
-- **Latency**: 350ms (L40S, 32 concurrent)
-- **Speed**: 3-5x real-time
-- **Audio Quality**: 16-bit PCM, 24kHz
-
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+Contributions welcome! Please feel free to submit a Pull Request.
 
 ## 📝 Changelog
 
-### v1.0.0 (2025-12-14)
-- Initial release
-- Docker deployment with GPU support
-- Web UI with multi-language support
-- REST API with Swagger docs
-- MCP server implementation
-- All-in-one Docker image
+### v1.2 (2025-12-14)
+- ✨ Custom voice cloning
+- 🌊 Streaming output
+- 🎤 Voice upload interface
+- 📦 Persistent custom voices
+
+### v1.1 (2025-12-14)
+- ✨ 584 voice options
+- 🎨 Enhanced UI with voice selector
+- 🔍 Voice search/filter
+- 🌐 Multi-language support
+
+### v1.0 (2025-12-14)
+- 🚀 Initial release
+- 💾 GPU resident mode
+- 🎯 Web UI
+- 📡 REST API
 
 ## 📄 License
 
@@ -234,10 +290,12 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - [Kyutai Labs](https://kyutai.org/) for the TTS model
 - [Moshi](https://github.com/kyutai-labs/moshi) for the implementation
 
-## ⭐ Star History
+## 📱 Links
 
-[![Star History Chart](https://api.star-history.com/svg?repos=neosun100/kyutai-tts-docker&type=Date)](https://star-history.com/#neosun100/kyutai-tts-docker)
+- **Docker Hub**: https://hub.docker.com/r/neosun/kyutai-tts
+- **GitHub**: https://github.com/neosun100/kyutai-tts-gpu-resident
+- **Demo**: http://localhost:8900 (after deployment)
 
-## 📱 Follow Us
+---
 
-![公众号](https://img.aws.xin/uPic/扫码_搜索联合传播样式-标准色版.png)
+Made with ❤️ by [neosun100](https://github.com/neosun100)
