@@ -221,4 +221,7 @@ setInterval(updateGPUStatus,5000);
 </body></html>'''
 
 if __name__ == '__main__':
+    print("🚀 Preloading model to GPU...")
+    gpu_manager.get_model(load_model)
+    print("✅ Model loaded and resident in GPU")
     app.run(host='0.0.0.0', port=PORT, debug=False)

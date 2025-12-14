@@ -54,7 +54,6 @@ def text_to_speech(
             pcm = np.concatenate(pcms, axis=-1)
         
         sphn.write_wav(output_path, pcm, tts_model.mimi.sample_rate)
-        gpu_manager.force_offload()
         
         return {
             'status': 'success',
@@ -62,7 +61,6 @@ def text_to_speech(
             'duration_seconds': len(pcm) / tts_model.mimi.sample_rate
         }
     except Exception as e:
-        gpu_manager.force_offload()
         return {'status': 'error', 'error': str(e)}
 
 @mcp.tool()

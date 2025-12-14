@@ -2,14 +2,13 @@ version: '3.8'
 
 services:
   kyutai-tts:
-    image: neosun/kyutai-tts:allinone
+    image: neosun/kyutai-tts:resident
     container_name: kyutai-tts
     ports:
       - "0.0.0.0:${PORT:-8900}:8900"
     environment:
       - PORT=${PORT:-8900}
       - DEVICE=${DEVICE:-cuda}
-      - GPU_IDLE_TIMEOUT=${GPU_IDLE_TIMEOUT:-60}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
     runtime: nvidia
     restart: unless-stopped
