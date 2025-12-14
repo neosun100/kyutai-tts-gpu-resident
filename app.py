@@ -84,8 +84,25 @@ def tts():
     try:
         tts_model = gpu_manager.get_model(load_model)
         entries = tts_model.prepare_script([text], padding_between=1)
-        voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
-        condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+        
+        # Handle custom voice with memory-cached embedding
+        if voice.startswith('custom/'):
+            if voice in voice_embedding_cache:
+                # Use cached embedding from memory
+                from moshi.models.tts import ConditionAttributes
+                condition_attributes = [ConditionAttributes(
+                    voice_emb=voice_embedding_cache[voice].to(DEVICE),
+                    cfg_coef=cfg_coef
+                )]
+            else:
+                # Extract and cache
+                voice_name = voice.replace('custom/', '').replace('.wav', '')
+                voice_path = f"/app/custom_voices/{voice_name}.wav"
+                condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+                voice_embedding_cache[voice] = condition_attributes[0].voice_emb.cpu()
+        else:
+            voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
+            condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
         
         result = tts_model.generate([entries], [condition_attributes])
         
@@ -121,9 +138,12 @@ def gpu_offload():
     gpu_manager.force_offload()
     return jsonify({'status': 'offloaded'})
 
+# Voice embedding cache
+voice_embedding_cache = {}
+
 @app.route('/api/voice/upload', methods=['POST'])
 def upload_custom_voice():
-    """Upload custom voice for cloning"""
+    """Upload custom voice"""
     if 'voice_file' not in request.files:
         return jsonify({'error': 'No voice file'}), 400
     
@@ -139,10 +159,16 @@ def upload_custom_voice():
         voice_path = os.path.join(voice_dir, f"{voice_name}.wav")
         voice_file.save(voice_path)
         
+        # Pre-extract embedding and cache in memory
+        tts_model = gpu_manager.get_model(load_model)
+        condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=2.0)
+        voice_embedding_cache[f"custom/{voice_name}.wav"] = condition_attributes[0].voice_emb.cpu()
+        
         return jsonify({
             'status': 'success',
             'voice_path': f"custom/{voice_name}.wav",
-            'message': f'Use "custom/{voice_name}.wav" as voice parameter'
+            'embedding_cached': True,
+            'message': f'Voice uploaded and cached. Use "custom/{voice_name}.wav"'
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -162,12 +188,23 @@ def tts_stream():
             tts_model = gpu_manager.get_model(load_model)
             entries = tts_model.prepare_script([text], padding_between=1)
             
+            # Handle custom voice with memory-cached embedding
             if voice.startswith('custom/'):
-                voice_path = f"/app/custom_voices/{voice.replace('custom/', '')}"
+                if voice in voice_embedding_cache:
+                    from moshi.models.tts import ConditionAttributes
+                    condition_attributes = [ConditionAttributes(
+                        voice_emb=voice_embedding_cache[voice].to(DEVICE),
+                        cfg_coef=cfg_coef
+                    )]
+                else:
+                    voice_name = voice.replace('custom/', '').replace('.wav', '')
+                    voice_path = f"/app/custom_voices/{voice_name}.wav"
+                    condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+                    voice_embedding_cache[voice] = condition_attributes[0].voice_emb.cpu()
             else:
                 voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
+                condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
             
-            condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
             result = tts_model.generate([entries], [condition_attributes])
             
             with tts_model.mimi.streaming(1), torch.no_grad():
