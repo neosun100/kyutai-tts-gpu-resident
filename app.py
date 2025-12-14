@@ -11,6 +11,7 @@ from moshi.models.tts import DEFAULT_DSM_TTS_REPO, DEFAULT_DSM_TTS_VOICE_REPO, T
 from gpu_manager import gpu_manager
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 CORS(app)
 swagger = Swagger(app)
 
@@ -85,24 +86,18 @@ def tts():
         tts_model = gpu_manager.get_model(load_model)
         entries = tts_model.prepare_script([text], padding_between=1)
         
-        # Handle custom voice with memory-cached embedding
+        # Get voice path
         if voice.startswith('custom/'):
-            if voice in voice_embedding_cache:
-                # Use cached embedding from memory
-                from moshi.models.tts import ConditionAttributes
-                condition_attributes = [ConditionAttributes(
-                    voice_emb=voice_embedding_cache[voice].to(DEVICE),
-                    cfg_coef=cfg_coef
-                )]
-            else:
-                # Extract and cache
-                voice_name = voice.replace('custom/', '').replace('.wav', '')
-                voice_path = f"/app/custom_voices/{voice_name}.wav"
-                condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
-                voice_embedding_cache[voice] = condition_attributes[0].voice_emb.cpu()
+            voice_path = f"/app/custom_voices/{voice.replace('custom/', '')}"
+            print(f"Using custom voice: {voice_path}")
+            print(f"File exists: {os.path.exists(voice_path)}")
+        elif voice.endswith('.safetensors'):
+            voice_path = voice
         else:
-            voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
-            condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+            voice_path = tts_model.get_voice_path(voice)
+        
+        print(f"Final voice_path: {voice_path}")
+        condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
         
         result = tts_model.generate([entries], [condition_attributes])
         
@@ -138,41 +133,6 @@ def gpu_offload():
     gpu_manager.force_offload()
     return jsonify({'status': 'offloaded'})
 
-# Voice embedding cache
-voice_embedding_cache = {}
-
-@app.route('/api/voice/upload', methods=['POST'])
-def upload_custom_voice():
-    """Upload custom voice"""
-    if 'voice_file' not in request.files:
-        return jsonify({'error': 'No voice file'}), 400
-    
-    voice_file = request.files['voice_file']
-    voice_name = request.form.get('voice_name', 'custom_voice')
-    
-    if not voice_file.filename.endswith('.wav'):
-        return jsonify({'error': 'Only WAV files'}), 400
-    
-    try:
-        voice_dir = '/app/custom_voices'
-        os.makedirs(voice_dir, exist_ok=True)
-        voice_path = os.path.join(voice_dir, f"{voice_name}.wav")
-        voice_file.save(voice_path)
-        
-        # Pre-extract embedding and cache in memory
-        tts_model = gpu_manager.get_model(load_model)
-        condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=2.0)
-        voice_embedding_cache[f"custom/{voice_name}.wav"] = condition_attributes[0].voice_emb.cpu()
-        
-        return jsonify({
-            'status': 'success',
-            'voice_path': f"custom/{voice_name}.wav",
-            'embedding_cached': True,
-            'message': f'Voice uploaded and cached. Use "custom/{voice_name}.wav"'
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/tts/stream', methods=['POST'])
 def tts_stream():
     """Streaming TTS"""
@@ -188,22 +148,15 @@ def tts_stream():
             tts_model = gpu_manager.get_model(load_model)
             entries = tts_model.prepare_script([text], padding_between=1)
             
-            # Handle custom voice with memory-cached embedding
+            # Get voice path
             if voice.startswith('custom/'):
-                if voice in voice_embedding_cache:
-                    from moshi.models.tts import ConditionAttributes
-                    condition_attributes = [ConditionAttributes(
-                        voice_emb=voice_embedding_cache[voice].to(DEVICE),
-                        cfg_coef=cfg_coef
-                    )]
-                else:
-                    voice_name = voice.replace('custom/', '').replace('.wav', '')
-                    voice_path = f"/app/custom_voices/{voice_name}.wav"
-                    condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
-                    voice_embedding_cache[voice] = condition_attributes[0].voice_emb.cpu()
+                voice_path = f"/app/custom_voices/{voice.replace('custom/', '')}"
+            elif voice.endswith('.safetensors'):
+                voice_path = voice
             else:
-                voice_path = tts_model.get_voice_path(voice) if not voice.endswith('.safetensors') else voice
-                condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
+                voice_path = tts_model.get_voice_path(voice)
+            
+            condition_attributes = tts_model.make_condition_attributes([voice_path], cfg_coef=cfg_coef)
             
             result = tts_model.generate([entries], [condition_attributes])
             
@@ -218,7 +171,74 @@ def tts_stream():
     
     return app.response_class(generate(), mimetype='audio/wav')
 
+@app.route('/api/voice/upload', methods=['POST'])
+def upload_custom_voice():
+    """Upload custom voice and generate embedding"""
+    if 'voice_file' not in request.files:
+        return jsonify({'error': 'No voice file'}), 400
+    
+    voice_file = request.files['voice_file']
+    voice_name = request.form.get('voice_name', 'custom_voice')
+    
+    if not voice_file.filename.endswith('.wav'):
+        return jsonify({'error': 'Only WAV files'}), 400
+    
+    try:
+        import tempfile
+        from safetensors.torch import save_file
+        
+        # Save uploaded WAV temporarily
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+            voice_file.save(tmp.name)
+            tmp_path = tmp.name
+        
+        # Load and process audio
+        wav_np, _ = sphn.read(tmp_path, sample_rate=24000)
+        duration = 10.0  # Use 10 seconds
+        length = int(24000 * duration)
+        wav = torch.from_numpy(wav_np[:, :length]).float()
+        wav = wav.mean(dim=0, keepdim=True)[None]  # Convert to mono
+        
+        # Pad if needed
+        missing = length - wav.shape[-1]
+        if missing > 0:
+            wav = torch.nn.functional.pad(wav, (0, missing))
+        
+        # Generate embedding using Mimi
+        tts_model = gpu_manager.get_model(load_model)
+        with torch.no_grad():
+            emb = tts_model.mimi.encode_to_latent(wav.to(DEVICE), quantize=False)
+        
+        # Save as safetensors
+        voice_dir = '/app/custom_voices'
+        os.makedirs(voice_dir, exist_ok=True)
+        safetensors_path = os.path.join(voice_dir, f"{voice_name}.safetensors")
+        
+        tensors = {"speaker_wavs": emb.cpu()}
+        save_file(tensors, safetensors_path)
+        
+        # Cleanup temp file
+        os.unlink(tmp_path)
+        
+        return jsonify({
+            'status': 'success',
+            'voice_path': f"custom/{voice_name}.safetensors",
+            'message': f'Voice cloned successfully! Use "custom/{voice_name}.safetensors"'
+        })
+    except Exception as e:
+        import traceback
+        print(f"Upload error: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/voices/custom')
+def list_custom_voices():
+    """List custom voices"""
+    voice_dir = '/app/custom_voices'
+    if not os.path.exists(voice_dir):
+        return jsonify({'voices': []})
+    voices = [f"custom/{f}" for f in os.listdir(voice_dir) if f.endswith('.safetensors')]
+    return jsonify({'voices': voices})
 def list_custom_voices():
     """List custom voices"""
     voice_dir = '/app/custom_voices'
@@ -279,7 +299,7 @@ audio{width:100%;margin-top:15px}
 <div class="form-group">
 <label>🎤 Upload Custom Voice (3-10s WAV)</label>
 <input type="file" id="voice-upload" accept=".wav">
-<button onclick="uploadVoice()" style="margin-top:10px;background:#16a34a">Upload Voice</button>
+<button onclick="uploadVoice()" style="margin-top:10px;background:#16a34a">Upload & Clone Voice</button>
 <div id="upload-status"></div>
 </div>
 <div class="param-grid">
@@ -296,6 +316,7 @@ audio{width:100%;margin-top:15px}
 </div>
 </div>
 <button onclick="generate()" id="btn" data-i18n="generate">Generate Speech</button>
+<button onclick="downloadAudio()" id="download-btn" style="display:none;background:#059669;margin-left:10px">Download Audio</button>
 <div id="status"></div>
 <audio id="audio" controls style="display:none"></audio>
 </div>
@@ -329,58 +350,11 @@ if(v==='expresso/ex03-ex01_happy_001_channel1_334s.wav')opt.selected=true;
 select.appendChild(opt);
 });
 }
-function filterVoices(){
-const filter=document.getElementById('voice-filter').value.toLowerCase();
-const select=document.getElementById('voice');
-const selected=select.value;
-select.innerHTML='';
-allVoices.filter(v=>v.toLowerCase().includes(filter)).forEach(v=>{
-const opt=document.createElement('option');
-opt.value=v;
-opt.textContent=v;
-if(v===selected)opt.selected=true;
-select.appendChild(opt);
-});
-}
-async function generate(){
-const text=document.getElementById('text').value;
-const voice=document.getElementById('voice').value;
-const mode=document.getElementById('mode').value;
-if(!text){alert('Please enter text');return}
-if(!voice){alert('Please select a voice');return}
-const btn=document.getElementById('btn');
-const status=document.getElementById('status');
-btn.disabled=true;
-status.className='status';
-status.textContent='Generating...';
-const formData=new FormData();
-formData.append('text',text);
-formData.append('voice',voice);
-formData.append('cfg_coef',document.getElementById('cfg').value);
-try{
-const endpoint=mode==='stream'?'/api/tts/stream':'/api/tts';
-const res=await fetch(endpoint,{method:'POST',body:formData});
-if(!res.ok)throw new Error(await res.text());
-const blob=await res.blob();
-const url=URL.createObjectURL(blob);
-const audio=document.getElementById('audio');
-audio.src=url;
-audio.style.display='block';
-audio.play();
-status.className='status success';
-status.textContent='✅ Generated successfully!';
-}catch(e){
-status.className='status error';
-status.textContent='❌ Error: '+e.message;
-}finally{
-btn.disabled=false;
-}
-}
 async function uploadVoice(){
 const file=document.getElementById('voice-upload').files[0];
 if(!file){alert('Please select a WAV file');return}
 const status=document.getElementById('upload-status');
-status.textContent='Uploading...';
+status.textContent='Cloning voice...';
 const formData=new FormData();
 formData.append('voice_file',file);
 formData.append('voice_name',file.name.replace('.wav',''));
@@ -399,6 +373,65 @@ status.textContent='❌ '+data.error;
 status.style.color='#f87171';
 status.textContent='❌ '+e.message;
 }
+}
+function filterVoices(){
+const filter=document.getElementById('voice-filter').value.toLowerCase();
+const select=document.getElementById('voice');
+const selected=select.value;
+select.innerHTML='';
+allVoices.filter(v=>v.toLowerCase().includes(filter)).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+opt.textContent=v;
+if(v===selected)opt.selected=true;
+select.appendChild(opt);
+});
+}
+let currentAudioUrl=null;
+async function generate(){
+const text=document.getElementById('text').value;
+const voice=document.getElementById('voice').value;
+const mode=document.getElementById('mode').value;
+if(!text){alert('Please enter text');return}
+if(!voice){alert('Please select a voice');return}
+const btn=document.getElementById('btn');
+const downloadBtn=document.getElementById('download-btn');
+const status=document.getElementById('status');
+btn.disabled=true;
+downloadBtn.style.display='none';
+status.className='status';
+status.textContent='Generating...';
+const formData=new FormData();
+formData.append('text',text);
+formData.append('voice',voice);
+formData.append('cfg_coef',document.getElementById('cfg').value);
+try{
+const endpoint=mode==='stream'?'/api/tts/stream':'/api/tts';
+const res=await fetch(endpoint,{method:'POST',body:formData});
+if(!res.ok)throw new Error(await res.text());
+const blob=await res.blob();
+if(currentAudioUrl)URL.revokeObjectURL(currentAudioUrl);
+currentAudioUrl=URL.createObjectURL(blob);
+const audio=document.getElementById('audio');
+audio.src=currentAudioUrl;
+audio.style.display='block';
+audio.play();
+downloadBtn.style.display='inline-block';
+status.className='status success';
+status.textContent='✅ Generated successfully!';
+}catch(e){
+status.className='status error';
+status.textContent='❌ Error: '+e.message;
+}finally{
+btn.disabled=false;
+}
+}
+function downloadAudio(){
+if(!currentAudioUrl)return;
+const a=document.createElement('a');
+a.href=currentAudioUrl;
+a.download='kyutai_tts_'+Date.now()+'.wav';
+a.click();
 }
 async function offloadGPU(){
 await fetch('/api/gpu/offload',{method:'POST'});

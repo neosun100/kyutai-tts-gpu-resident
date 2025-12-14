@@ -1,5 +1,7 @@
 moshi==0.2.11
 torch
+torchaudio
+safetensors
 sphn
 sounddevice
 flask==3.0.0

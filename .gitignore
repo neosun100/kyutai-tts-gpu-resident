@@ -1,8 +1,3 @@
-# Environment variables
-.env
-*.env
-!.env.example
-
 # Python
 __pycache__/
 *.py[cod]
@@ -28,7 +23,7 @@ venv/
 ENV/
 env/
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
@@ -40,32 +35,31 @@ env/
 *.log
 logs/
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # Docker
-*.tar
+.dockerignore
 
-# Models (too large for git)
-models/
-*.safetensors
-*.bin
-*.onnx
-*.pt
-*.pth
-
-# Output files
+# User data (privacy)
 outputs/
+custom_voices/
 *.wav
-*.mp3
+*.safetensors
 
 # Temporary files
 tmp/
 temp/
 *.tmp
 
-# Backup files
-*.backup.*
+# OS
+Thumbs.db
+.DS_Store
 
-# Test files
-/tmp/
-
-# Jupyter
-.ipynb_checkpoints/
+# Project specific
+models/
+*.pth
+*.pt
+*.ckpt
